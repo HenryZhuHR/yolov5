@@ -1,4 +1,4 @@
-# YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
+# Ultralytics YOLOv5 🚀, AGPL-3.0 license
 """
 Export a YOLOv5 PyTorch model to other formats. TensorFlow exports authored by https://github.com/zldrobit
 
@@ -134,6 +134,7 @@ def try_export(inner_func):
     inner_args = get_default_args(inner_func)
 
     def outer_func(*args, **kwargs):
+        """Logs success/failure and execution details of model export functions wrapped with @try_export decorator."""
         prefix = inner_args["prefix"]
         try:
             with Profile() as dt:
@@ -224,7 +225,7 @@ def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr("ONNX
 
 @try_export
 def export_openvino(file, metadata, half, int8, data, prefix=colorstr("OpenVINO:")):
-    # YOLOv5 OpenVINO export
+    """Exports a YOLOv5 model to OpenVINO format with optional FP16 and INT8 quantization; see https://pypi.org/project/openvino-dev/."""
     check_requirements("openvino-dev>=2023.0")  # requires openvino-dev: https://pypi.org/project/openvino-dev/
     import openvino.runtime as ov  # noqa
     from openvino.tools import mo  # noqa
@@ -244,6 +245,7 @@ def export_openvino(file, metadata, half, int8, data, prefix=colorstr("OpenVINO:
         from utils.dataloaders import create_dataloader
 
         def gen_dataloader(yaml_path, task="train", imgsz=640, workers=4):
+            """Generates a DataLoader for model training or validation based on the given YAML dataset configuration."""
             data_yaml = check_yaml(yaml_path)
             data = check_dataset(data_yaml)
             dataloader = create_dataloader(
@@ -346,6 +348,7 @@ def export_engine(model, im, file, half, dynamic, simplify, workspace=4, verbose
     onnx = file.with_suffix(".onnx")
 
     LOGGER.info(f"\n{prefix} starting export with TensorRT {trt.__version__}...")
+    is_trt10 = int(trt.__version__.split(".")[0]) >= 10  # is TensorRT >= 10
     assert onnx.exists(), f"failed to export ONNX file: {onnx}"
     f = file.with_suffix(".engine")  # TensorRT engine file
     logger = trt.Logger(trt.Logger.INFO)
@@ -354,9 +357,10 @@ def export_engine(model, im, file, half, dynamic, simplify, workspace=4, verbose
 
     builder = trt.Builder(logger)
     config = builder.create_builder_config()
-    config.max_workspace_size = workspace * 1 << 30
-    # config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace << 30)  # fix TRT 8.4 deprecation notice
-
+    if is_trt10:
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace << 30)
+    else:  # TensorRT versions 7, 8
+        config.max_workspace_size = workspace * 1 << 30
     flag = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
     network = builder.create_network(flag)
     parser = trt.OnnxParser(network, logger)
@@ -381,8 +385,10 @@ def export_engine(model, im, file, half, dynamic, simplify, workspace=4, verbose
     LOGGER.info(f"{prefix} building FP{16 if builder.platform_has_fast_fp16 and half else 32} engine as {f}")
     if builder.platform_has_fast_fp16 and half:
         config.set_flag(trt.BuilderFlag.FP16)
-    with builder.build_engine(network, config) as engine, open(f, "wb") as t:
-        t.write(engine.serialize())
+
+    build = builder.build_serialized_network if is_trt10 else builder.build_engine
+    with build(network, config) as engine, open(f, "wb") as t:
+        t.write(engine if is_trt10 else engine.serialize())
     return f, None
 
 
@@ -401,6 +407,9 @@ def export_saved_model(
     keras=False,
     prefix=colorstr("TensorFlow SavedModel:"),
 ):
+    """Exports a YOLOv5 model to TensorFlow SavedModel format, supporting dynamic axes and non-maximum suppression
+    (NMS).
+    """
     # YOLOv5 TensorFlow SavedModel export
     try:
         import tensorflow as tf
@@ -471,6 +480,7 @@ def export_tflite(
     keras_model, im, file, int8, per_tensor, data, nms, agnostic_nms, prefix=colorstr("TensorFlow Lite:")
 ):
     # YOLOv5 TensorFlow Lite export
+    """Exports YOLOv5 model to TensorFlow Lite format with optional FP16, INT8, and NMS support."""
     import tensorflow as tf
 
     LOGGER.info(f"\n{prefix} starting export with tensorflow {tf.__version__}...")
@@ -778,6 +788,7 @@ def run(
     iou_thres=0.45,  # TF.js NMS: IoU threshold
     conf_thres=0.25,  # TF.js NMS: confidence threshold
 ):
+    """Exports YOLOv5 model to specified formats including ONNX, TensorRT, CoreML, and TensorFlow; see https://github.com/ultralytics/yolov5."""
     t = time.time()
     include = [x.lower() for x in include]  # to lowercase
     fmts = tuple(export_formats()["Argument"][1:])  # --include arguments
